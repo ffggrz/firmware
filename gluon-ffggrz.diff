@@ -1,0 +1,136 @@
+diff --git a/package/gluon-config-mode-mesh-vpn/luasrc/lib/gluon/config-mode/reboot/0100-mesh-vpn.lua b/package/gluon-config-mode-mesh-vpn/luasrc/lib/gluon/config-mode/reboot/0100-mesh-vpn.lua
+index b94d194a..c25b1411 100644
+--- a/package/gluon-config-mode-mesh-vpn/luasrc/lib/gluon/config-mode/reboot/0100-mesh-vpn.lua
++++ b/package/gluon-config-mode-mesh-vpn/luasrc/lib/gluon/config-mode/reboot/0100-mesh-vpn.lua
+@@ -11,9 +11,11 @@ local util = require "gluon.util"
+ local pretty_hostname = require 'pretty_hostname'
+ 
+ 
++
+ local has_fastd = unistd.access('/lib/gluon/mesh-vpn/fastd')
+ local has_tunneldigger = unistd.access('/lib/gluon/mesh-vpn/tunneldigger')
+-
++local fastd_enabled = uci:get_bool("fastd", "mesh_vpn", "enabled")
++local tunneldigger_enabled = uci:get_bool("tunneldigger", "mesh_vpn", "enabled")
+ 
+ local hostname = pretty_hostname.get(uci)
+ local contact = uci:get_first("gluon-node-info", "owner", "contact")
+@@ -22,19 +24,13 @@ local pubkey
+ local msg
+ 
+ 
+-if has_tunneldigger then
+-	local tunneldigger_enabled = uci:get_bool("tunneldigger", "mesh_vpn", "enabled")
+-	if not tunneldigger_enabled then
+-		msg = site_i18n._translate('gluon-config-mode:novpn')
+-	end
+-elseif has_fastd then
+-	local fastd_enabled = uci:get_bool("fastd", "mesh_vpn", "enabled")
+-	if fastd_enabled then
+-		pubkey = util.trim(util.exec("/etc/init.d/fastd show_key mesh_vpn"))
+-		msg = site_i18n._translate('gluon-config-mode:pubkey')
+-	else
+-		msg = site_i18n._translate('gluon-config-mode:novpn')
+-	end
++if has_fastd and fastd_enabled then
++	pubkey = util.trim(util.exec("/etc/init.d/fastd show_key mesh_vpn"))
++	msg = site_i18n._translate('gluon-config-mode:pubkey')
++elseif has_tunneldigger and tunneldigger_enabled then
++	msg = site_i18n._translate('gluon-config-mode:nokey')
++else
++	msg = site_i18n._translate('gluon-config-mode:novpn')
+ end
+ 
+ if not msg then return end
+diff --git a/package/gluon-mesh-vpn-core/luasrc/lib/gluon/mesh-vpn/update-config b/package/gluon-mesh-vpn-core/luasrc/lib/gluon/mesh-vpn/update-config
+index 45ecc2d5..e9e34d41 100755
+--- a/package/gluon-mesh-vpn-core/luasrc/lib/gluon/mesh-vpn/update-config
++++ b/package/gluon-mesh-vpn-core/luasrc/lib/gluon/mesh-vpn/update-config
+@@ -2,14 +2,31 @@
+ 
+ local uci = require('simple-uci').cursor()
+ local unistd = require 'posix.unistd'
++local util = require 'gluon.util'
+ 
+ local vpn
+-if unistd.access('/lib/gluon/mesh-vpn/fastd') then
+-	vpn = 'fastd'
+-elseif unistd.access('/lib/gluon/mesh-vpn/tunneldigger') then
++local has_fastd = unistd.access('/lib/gluon/mesh-vpn/fastd')
++local has_tunneldigger = unistd.access('/lib/gluon/mesh-vpn/tunneldigger')
++if has_fastd then
++	local methods = uci:get('fastd', 'mesh_vpn', 'method')
++	if methods then
++		if util.contains(methods, 'null') then
++			if has_tunneldigger then
++				vpn = 'tunneldigger'
++			else
++				vpn = 'fastd'
++			end
++		else
++			vpn = 'fastd'
++		end
++	else
++		vpn = 'fastd'
++	end
++elseif has_tunneldigger then
+ 	vpn = 'tunneldigger'
+ end
+ 
++
+ local vpn_config = {
+ 	enabled = uci:get_bool('gluon', 'mesh_vpn', 'enabled'),
+ 	limit_enabled = uci:get_bool('gluon', 'mesh_vpn', 'limit_enabled'),
+diff --git a/package/gluon-mesh-vpn-core/luasrc/lib/gluon/upgrade/500-mesh-vpn b/package/gluon-mesh-vpn-core/luasrc/lib/gluon/upgrade/500-mesh-vpn
+index 019b9afb..97e4e586 100755
+--- a/package/gluon-mesh-vpn-core/luasrc/lib/gluon/upgrade/500-mesh-vpn
++++ b/package/gluon-mesh-vpn-core/luasrc/lib/gluon/upgrade/500-mesh-vpn
+@@ -35,32 +35,33 @@ uci:save('firewall')
+ 
+ -- VPN migration
+ if not uci:get('gluon', 'mesh_vpn') then
+-	local vpn
+-	if unistd.access('/lib/gluon/mesh-vpn/fastd') then
+-		vpn = 'fastd'
+-	elseif unistd.access('/lib/gluon/mesh-vpn/tunneldigger') then
+-		vpn = 'tunneldigger'
+-	end
+-
+ 	local fastd_enabled = uci:get('fastd', 'mesh_vpn', 'enabled')
+ 	local tunneldigger_enabled = uci:get('tunneldigger', 'mesh_vpn', 'enabled')
+ 
++	-- Migration Gera-Greiz from gluon-web-mesh-vpn-select to standard gluon-web-mesh-vpn-fastd
++	if tunneldigger_enabled == '1' then
++		local methods = {}
++		table.insert(methods, 'null')
++		for _, method in ipairs(site.mesh_vpn.fastd.methods()) do
++			if method ~= 'null' then
++				table.insert(methods, method)
++			end
++		end
++		uci:set('fastd', 'mesh_vpn', 'method', methods)
++		uci:save('fastd')
++		uci:commit('fastd')
++	end
++
+ 	local enabled
+ 
+-	-- If the installed VPN package has its enabled state set, keep the value
+-	if vpn == 'fastd' and fastd_enabled then
+-		enabled = fastd_enabled == '1'
+-	elseif vpn == 'tunneldigger' and tunneldigger_enabled then
+-		enabled = tunneldigger_enabled == '1'
+-	-- Otherwise, migrate the other package's value if any is set
+-	elseif fastd_enabled or tunneldigger_enabled then
++	-- If any of the VPN package has its enabled state set, keep the value
++	if fastd_enabled or tunnelgigger_enabled then
+ 		enabled = fastd_enabled == '1' or tunneldigger_enabled == '1'
+ 	-- If nothing is set, use the default
+ 	else
+ 		enabled = site.mesh_vpn.enabled(false)
+ 	end
+ 
+-
+ 	local limit_enabled = tonumber((uci:get('simple-tc', 'mesh_vpn', 'enabled')))
+ 	if limit_enabled == nil then
+ 		limit_enabled = site.mesh_vpn.bandwidth_limit.enabled(false)
