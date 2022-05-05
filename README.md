@@ -4,7 +4,7 @@
 
 Um aus diesem Repository die Firmware für die Router der Community Gera-Greiz zu erstellen, wird wie folgt vorgegangen:
 
-- Repository clonen (inkl. Submodule):  
+- Repository clonen (inkl. Submodule):
   ```
   git clone --recurse-submodules https://github.com/ffggrz/firmware.git
   ```
@@ -16,11 +16,11 @@ Um aus diesem Repository die Firmware für die Router der Community Gera-Greiz z
 - Community-spezifische Änderungen anwenden:
   ```
   cd gluon
-  cp -r ../site site
-  patch -p1 < ../gluon-ffggrz.diff
+  git apply ../gluon-ffggrz.diff
+  export GLUON_SITEDIR="../site/"
   ```
 - Firmware für alle unterstützten Routermodelle erstellen
   ```
   make update
-  ../buildalltargets
+  ../buildalltargets.sh
   ```
