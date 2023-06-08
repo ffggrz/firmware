@@ -1,3 +1,5 @@
+**__veraltet, ab 2023 mit den Firmware-Versionen 1.4.0 bzw. 20230605-exp nutzen wir keine eigene angepaßte Gluon-Version, sondern das unveränderte offizielle Gluon.__**
+
 # Firmware für Router in der Freifunk-Community Gera-Greiz
 
 ## Firmware erstellen
